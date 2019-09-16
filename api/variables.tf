@@ -1,0 +1,9 @@
+variable "task_exec_arn" {}
+variable "namespace_id" {}
+variable "cluster_id" {}
+variable "task_sg_id" {}
+variable "subnets" {}
+variable "name" {}
+variable "image" {}
+variable "mesh" {}
+variable "mesh_node" {}
