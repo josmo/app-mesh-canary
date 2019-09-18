@@ -1,7 +1,7 @@
 resource "aws_ecs_task_definition" "api" {
   family                   = var.name
   network_mode             = "awsvpc"
-  requires_compatibilities = ["FARGATE", "EC2"]
+  requires_compatibilities = ["EC2"]
   cpu                      = 256
   memory                   = "512"
   execution_role_arn       = var.task_exec_arn
@@ -55,6 +55,7 @@ resource "aws_ecs_task_definition" "api" {
     ],
     "environment": [
     { "name": "APPMESH_VIRTUAL_NODE_NAME", "value": "mesh/${var.mesh}/virtualNode/${var.mesh_node}"},
+    { "name": "ENVOY_LOG_LEVEL", "value": "debug" },
     {
       "name": "ENABLE_ENVOY_XRAY_TRACING",
       "value": "1"
@@ -145,12 +146,12 @@ resource "aws_ecs_service" "api" {
   cluster         = var.cluster_id
   task_definition = aws_ecs_task_definition.api.arn
   desired_count   = 1
-  launch_type     = "FARGATE"
+  launch_type     = "EC2"
   service_registries {
     registry_arn = aws_service_discovery_service.app.arn
   }
   network_configuration {
-    assign_public_ip = true
+//    assign_public_ip = true
     security_groups = [var.task_sg_id]
     subnets         = var.subnets
   }
