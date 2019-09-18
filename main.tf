@@ -1,10 +1,10 @@
 terraform {
-  required_version = "= 0.12.6"
+  required_version = "= 0.12.7"
 }
 
 provider "aws" {
   region  = "us-west-2"
-  version = "~> 2.23.0"
+  version = "~> 2.28.1"
 }
 
 data "terraform_remote_state" "infra_base" {
@@ -15,6 +15,7 @@ data "terraform_remote_state" "infra_base" {
     region = "us-west-2"
   }
 }
+
 
 resource "aws_security_group" "lb" {
   name        = "tf-ecs-alb"
@@ -82,6 +83,11 @@ resource "aws_alb_listener" "front_end" {
   }
 }
 
+resource "aws_cloudwatch_log_group" "ecs_log" {
+  name = "ecs-log"
+  retention_in_days = 3
+}
+
 resource "aws_ecs_cluster" "main" {
   name = "tf-ecs-cluster"
 }
@@ -114,9 +120,17 @@ resource "aws_iam_role_policy" "ecs_role_policy" {
         "ecr:GetAuthorizationToken",
         "ecr:BatchCheckLayerAvailability",
         "ecr:GetDownloadUrlForLayer",
+        "ecr:GetRepositoryPolicy",
+        "ecr:DescribeRepositories",
+        "ecr:ListImages",
+        "ecr:DescribeImages",
         "ecr:BatchGetImage",
         "logs:CreateLogStream",
-        "logs:PutLogEvents"
+        "logs:PutLogEvents",
+        "xray:PutTraceSegments",
+        "servicediscovery:DiscoverInstances",
+        "acm:DescribeCertificate",
+        "appmesh:StreamAggregatedResources"
       ],
     "Resource": ["*"]
   }
@@ -126,7 +140,7 @@ POLICY
 resource "aws_ecs_task_definition" "gateway" {
   family                   = "gateway"
   network_mode             = "awsvpc"
-  requires_compatibilities = ["FARGATE"]
+  requires_compatibilities = ["FARGATE", "EC2"]
   cpu                      = 256
   memory                   = 512
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
@@ -153,9 +167,16 @@ resource "aws_ecs_task_definition" "gateway" {
     "networkMode": "awsvpc",
     "essential" : true,
     "environment": [
-    { "name": "BACKENDS", "value": "api.simpleapp.local:80"},
     { "name": "WETTY_PORT", "value": "80"}
     ],
+    "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "${aws_cloudwatch_log_group.ecs_log.name}",
+          "awslogs-region": "us-west-2",
+          "awslogs-stream-prefix": "gateway"
+        }
+      },
     "dependsOn" : [{ "containerName" : "envoy", "condition": "HEALTHY"}],
     "portMappings": [
       {
@@ -165,13 +186,28 @@ resource "aws_ecs_task_definition" "gateway" {
     ]
   },
   {
-    "cpu": 125,
-    "memory" : 256,
     "name": "envoy",
     "image": "111345817488.dkr.ecr.us-west-2.amazonaws.com/aws-appmesh-envoy:v1.11.1.1-prod",
+    "user": "1337",
     "essential": true,
-    "networkMode": "awsvpc",
-    "environment": [{ "name": "APPMESH_VIRTUAL_NODE_NAME", "value": "mesh/simpleapp/virtualNode/gateway"}],
+    "ulimits": [
+     {
+        "name": "nofile",
+        "hardLimit": 15000,
+        "softLimit": 15000
+     }
+    ],
+    "environment": [
+    { "name": "APPMESH_VIRTUAL_NODE_NAME", "value": "mesh/${aws_appmesh_mesh.simple.name}/virtualNode/${aws_appmesh_virtual_node.gateway.name}"},
+    {
+      "name": "ENABLE_ENVOY_XRAY_TRACING",
+      "value": "1"
+    },
+    {
+      "name": "ENABLE_ENVOY_STATS_TAGS",
+      "value": "1"
+    }
+    ],
     "portMappings": [
         {
           "containerPort": 9901,
@@ -189,17 +225,60 @@ resource "aws_ecs_task_definition" "gateway" {
           "protocol": "tcp"
         }
       ],
+    "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "${aws_cloudwatch_log_group.ecs_log.name}",
+          "awslogs-region": "us-west-2",
+          "awslogs-stream-prefix": "gateway-envoy"
+        }
+      },
     "healthCheck": {
        "command": [ "CMD-SHELL", "curl -s http://localhost:9901/server_info | grep state | grep -q LIVE" ],
        "interval": 5,
        "retries": 3,
        "startPeriod": 10,
        "timeout": 2
-     },
-    "user" : "1337"
+     }
+  },
+{
+  "name": "xray-daemon",
+  "image": "amazon/aws-xray-daemon",
+  "user": "1337",
+  "essential": true,
+  "cpu": 32,
+  "memoryReservation": 256,
+  "portMappings": [
+    {
+      "hostPort": 2000,
+      "containerPort": 2000,
+      "protocol": "udp"
+    }
+  ],
+  "logConfiguration": {
+    "logDriver": "awslogs",
+    "options": {
+      "awslogs-group": "${aws_cloudwatch_log_group.ecs_log.name}",
+      "awslogs-region": "us-west-2",
+      "awslogs-stream-prefix": "gateway-xray"
+    }
   }
+}
 ]
 DEFINITION
+}
+resource "aws_service_discovery_service" "gateway" {
+  name = "gateway"
+  dns_config {
+    namespace_id = aws_service_discovery_private_dns_namespace.simpleapp.id
+    dns_records {
+      ttl = 10
+      type = "A"
+    }
+  }
+  health_check_custom_config {
+    failure_threshold = 1
+  }
 }
 
 resource "aws_ecs_service" "gateway" {
@@ -213,6 +292,9 @@ resource "aws_ecs_service" "gateway" {
     security_groups = [aws_security_group.ecs_tasks.id]
     subnets         = [data.terraform_remote_state.infra_base.outputs.subneta,data.terraform_remote_state.infra_base.outputs.subnetb,data.terraform_remote_state.infra_base.outputs.subnetc]
   }
+  service_registries {
+    registry_arn = aws_service_discovery_service.gateway.arn
+  }
   load_balancer {
     target_group_arn = aws_alb_target_group.app.id
     container_name   = "app"
@@ -225,7 +307,7 @@ resource "aws_ecs_service" "gateway" {
 }
 
 resource "aws_service_discovery_private_dns_namespace" "simpleapp" {
-  name = "simpleapp.local"
+  name = "simpleapp"
   vpc = data.terraform_remote_state.infra_base.outputs.vpc_id
 }
 
@@ -233,9 +315,11 @@ resource "aws_service_discovery_private_dns_namespace" "simpleapp" {
 module "api_1" {
   source = "./api"
   name = "api"
-  mesh = "simpleapp"
-  mesh_node = "api-1"
-  image = "tutum/hello-world"
+  mesh = aws_appmesh_mesh.simple.name
+  mesh_node = aws_appmesh_virtual_node.api_1.name
+//  image = "tutum/hello-world"
+  image = "karthequian/helloworld:latest"
+  log_name = aws_cloudwatch_log_group.ecs_log.name
   task_exec_arn = aws_iam_role.ecs_task_execution.arn
   namespace_id = aws_service_discovery_private_dns_namespace.simpleapp.id
   cluster_id = aws_ecs_cluster.main.id
@@ -243,76 +327,111 @@ module "api_1" {
   subnets = list(data.terraform_remote_state.infra_base.outputs.subneta,data.terraform_remote_state.infra_base.outputs.subnetb,data.terraform_remote_state.infra_base.outputs.subnetc)
 }
 
-module "api_2" {
-  source = "./api"
-  name = "api-2"
-  mesh = "simpleapp"
-  mesh_node = "api-2"
-  image = "karthequian/helloworld:latest"
-  task_exec_arn = aws_iam_role.ecs_task_execution.arn
-  namespace_id = aws_service_discovery_private_dns_namespace.simpleapp.id
-  cluster_id = aws_ecs_cluster.main.id
-  task_sg_id = aws_security_group.ecs_tasks.id
-  subnets = list(data.terraform_remote_state.infra_base.outputs.subneta,data.terraform_remote_state.infra_base.outputs.subnetb,data.terraform_remote_state.infra_base.outputs.subnetc)
-}
+//module "api_2" {
+//  source = "./api"
+//  name = "api-2"
+//  mesh = aws_appmesh_mesh.simple.name
+//  mesh_node =  aws_appmesh_virtual_node.api_2.name
+//  image = "karthequian/helloworld:latest"
+////  image = "tutum/hello-world"
+//  log_name = aws_cloudwatch_log_group.ecs_log.name
+//  task_exec_arn = aws_iam_role.ecs_task_execution.arn
+//  namespace_id = aws_service_discovery_private_dns_namespace.simpleapp.id
+//  cluster_id = aws_ecs_cluster.main.id
+//  task_sg_id = aws_security_group.ecs_tasks.id
+//  subnets = list(data.terraform_remote_state.infra_base.outputs.subneta,data.terraform_remote_state.infra_base.outputs.subnetb,data.terraform_remote_state.infra_base.outputs.subnetc)
+//}
 
 
 
 resource "aws_appmesh_mesh" "simple" {
   name = "simpleapp"
   spec {
-//    egress_filter {
-//      type = "ALLOW_ALL"
+    egress_filter {
+      type = "ALLOW_ALL"
+    }
+  }
+}
+//resource "aws_appmesh_virtual_router" "api_vr" {
+//  name      = "api-vr"
+//  mesh_name = aws_appmesh_mesh.simple.id
+//  spec {
+//    listener {
+//      port_mapping {
+//        port     = 80
+//        protocol = "http"
+//      }
 //    }
-  }
-}
-resource "aws_appmesh_virtual_router" "api_vr" {
-  name      = "api-vr"
-  mesh_name = aws_appmesh_mesh.simple.id
-  spec {
-    listener {
-      port_mapping {
-        port     = 80
-        protocol = "http"
-      }
-    }
-  }
-}
-resource "aws_appmesh_route" "api_route" {
-  name                = "api-route"
-  mesh_name           = aws_appmesh_mesh.simple.id
-  virtual_router_name = aws_appmesh_virtual_router.api_vr.name
-  spec {
-    http_route {
-      match {
-        prefix = "/"
-      }
-
-      action {
-        weighted_target {
-          virtual_node = aws_appmesh_virtual_node.api_1.name
-          weight       = 100
-        }
-
+//  }
+//}
+//resource "aws_appmesh_route" "api_route" {
+//  name                = "api-route"
+//  mesh_name           = aws_appmesh_mesh.simple.id
+//  virtual_router_name = aws_appmesh_virtual_router.api_vr.name
+//  spec {
+//    http_route {
+//      match {
+//        prefix = "/"
+//      }
+//
+//      action {
 //        weighted_target {
-//          virtual_node = aws_appmesh_virtual_node.api_2.name
-//          weight       = 50
+//          virtual_node = aws_appmesh_virtual_node.api_1.name
+//          weight       = 1
 //        }
+//      }
+//    }
+//  }
+//}
+//
+//
+resource "aws_appmesh_virtual_service" "api" {
+  mesh_name = aws_appmesh_mesh.simple.id
+  name = "api.${aws_service_discovery_private_dns_namespace.simpleapp.name}"
+  spec {
+    provider {
+      virtual_node {
+        virtual_node_name = aws_appmesh_virtual_node.api_1.name
       }
+//      virtual_router {
+//        virtual_router_name = aws_appmesh_virtual_router.api_vr.name
+//      }
     }
   }
 }
-
+//
+//resource "aws_appmesh_virtual_service" "api-2" {
+//  mesh_name = aws_appmesh_mesh.simple.id
+//  name = "api-2.${aws_service_discovery_private_dns_namespace.simpleapp.name}"
+//  spec {
+//    provider {
+//      virtual_node {
+//        virtual_node_name = aws_appmesh_virtual_node.api_2.name
+//      }
+//    }
+//  }
+//}
 resource "aws_appmesh_virtual_node" "gateway" {
   name      = "gateway"
   mesh_name = aws_appmesh_mesh.simple.id
   spec {
-    backend {
-
-//      virtual_service {
-//        virtual_service_name = aws_appmesh_virtual_service.api.name
-//      }
+    logging {
+      access_log {
+        file {
+          path = "/dev/stdout"
+        }
+      }
     }
+    backend {
+      virtual_service {
+        virtual_service_name = aws_appmesh_virtual_service.api.name
+      }
+    }
+//    backend {
+//      virtual_service {
+//        virtual_service_name = aws_appmesh_virtual_service.api-2.name
+//      }
+//    }
     listener {
       port_mapping {
         port     = 80
@@ -326,22 +445,28 @@ resource "aws_appmesh_virtual_node" "gateway" {
     }
   }
 }
-resource "aws_appmesh_virtual_service" "api" {
-  mesh_name = aws_appmesh_mesh.simple.id
-  name = "api.${aws_service_discovery_private_dns_namespace.simpleapp.name}"
-  spec {
-    provider {
-      virtual_router {
-        virtual_router_name = aws_appmesh_virtual_router.api_vr.name
-      }
-    }
-  }
-}
+
 resource "aws_appmesh_virtual_node" "api_1" {
   name      = "api-1"
   mesh_name = aws_appmesh_mesh.simple.id
   spec {
+    logging {
+      access_log {
+        file {
+          path = "/dev/stdout"
+        }
+      }
+    }
     listener {
+      //      health_check {
+      //        path = "/"
+      //        port = 80
+      //        healthy_threshold = 5
+      //        interval_millis = 30000
+      //        protocol = "http"
+      //        timeout_millis = 5000
+      //        unhealthy_threshold = 2
+      //      }
       port_mapping {
         port     = 80
         protocol = "http"
@@ -354,20 +479,37 @@ resource "aws_appmesh_virtual_node" "api_1" {
     }
   }
 }
-resource "aws_appmesh_virtual_node" "api_2" {
-  name      = "api-2"
-  mesh_name = aws_appmesh_mesh.simple.id
-  spec {
-    listener {
-      port_mapping {
-        port     = 80
-        protocol = "http"
-      }
-    }
-    service_discovery {
-      dns {
-        hostname = "api-2.${aws_service_discovery_private_dns_namespace.simpleapp.name}"
-      }
-    }
-  }
-}
+//
+//resource "aws_appmesh_virtual_node" "api_2" {
+//  name      = "api-2"
+//  mesh_name = aws_appmesh_mesh.simple.id
+//  spec {
+//    logging {
+//      access_log {
+//        file {
+//          path = "/dev/stdout"
+//        }
+//      }
+//    }
+//    listener {
+////      health_check {
+////        path = "/"
+////        port = 80
+////        healthy_threshold = 5
+////        interval_millis = 30000
+////        protocol = "http"
+////        timeout_millis = 5000
+////        unhealthy_threshold = 2
+////      }
+//      port_mapping {
+//        port     = 80
+//        protocol = "http"
+//      }
+//    }
+//    service_discovery {
+//      dns {
+//        hostname = "api-2.${aws_service_discovery_private_dns_namespace.simpleapp.name}"
+//      }
+//    }
+//  }
+//}

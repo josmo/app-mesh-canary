@@ -1,7 +1,7 @@
 resource "aws_ecs_task_definition" "api" {
   family                   = var.name
   network_mode             = "awsvpc"
-  requires_compatibilities = ["FARGATE"]
+  requires_compatibilities = ["FARGATE", "EC2"]
   cpu                      = 256
   memory                   = "512"
   execution_role_arn       = var.task_exec_arn
@@ -21,13 +21,19 @@ resource "aws_ecs_task_definition" "api" {
   container_definitions = <<DEFINITION
 [
   {
-    "cpu": 125,
     "image": "${var.image}",
-    "memory": 256,
     "name": "app",
     "networkMode": "awsvpc",
     "essential" : true,
     "dependsOn" : [{ "containerName" : "envoy", "condition": "HEALTHY"}],
+    "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "${var.log_name}",
+          "awslogs-region": "us-west-2",
+          "awslogs-stream-prefix": "${var.name}"
+        }
+      },
     "portMappings": [
       {
         "containerPort": 80,
@@ -36,13 +42,36 @@ resource "aws_ecs_task_definition" "api" {
     ]
   },
   {
-    "cpu": 125,
-    "memory" : 256,
     "name": "envoy",
     "image": "111345817488.dkr.ecr.us-west-2.amazonaws.com/aws-appmesh-envoy:v1.11.1.1-prod",
+    "user": "1337",
     "essential": true,
-    "networkMode": "awsvpc",
-    "environment": [{ "name": "APPMESH_VIRTUAL_NODE_NAME", "value": "mesh/${var.mesh}/virtualNode/${var.mesh_node}"}],
+    "ulimits": [
+     {
+        "name": "nofile",
+        "hardLimit": 15000,
+        "softLimit": 15000
+     }
+    ],
+    "environment": [
+    { "name": "APPMESH_VIRTUAL_NODE_NAME", "value": "mesh/${var.mesh}/virtualNode/${var.mesh_node}"},
+    {
+      "name": "ENABLE_ENVOY_XRAY_TRACING",
+      "value": "1"
+    },
+    {
+      "name": "ENABLE_ENVOY_STATS_TAGS",
+      "value": "1"
+    }
+    ],
+    "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "${var.log_name}",
+          "awslogs-region": "us-west-2",
+          "awslogs-stream-prefix": "${var.name}-envoy"
+        }
+      },
     "portMappings": [
         {
           "containerPort": 9901,
@@ -60,15 +89,38 @@ resource "aws_ecs_task_definition" "api" {
           "protocol": "tcp"
         }
       ],
+
     "healthCheck": {
        "command": [ "CMD-SHELL", "curl -s http://localhost:9901/server_info | grep state | grep -q LIVE" ],
        "interval": 5,
        "retries": 3,
        "startPeriod": 10,
        "timeout": 2
-     },
-    "user" : "1337"
+     }
+  },
+{
+  "name": "xray-daemon",
+  "image": "amazon/aws-xray-daemon",
+  "user": "1337",
+  "essential": true,
+  "cpu": 32,
+  "memoryReservation": 256,
+  "portMappings": [
+    {
+      "hostPort": 2000,
+      "containerPort": 2000,
+      "protocol": "udp"
+    }
+  ],
+  "logConfiguration": {
+    "logDriver": "awslogs",
+    "options": {
+      "awslogs-group": "${var.log_name}",
+      "awslogs-region": "us-west-2",
+      "awslogs-stream-prefix": "${var.name}-xray"
+    }
   }
+}
 ]
 DEFINITION
 }
@@ -82,6 +134,9 @@ resource "aws_service_discovery_service" "app" {
       ttl = 10
       type = "A"
     }
+  }
+  health_check_custom_config {
+    failure_threshold = 1
   }
 }
 

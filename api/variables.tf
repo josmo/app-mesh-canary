@@ -7,3 +7,4 @@ variable "name" {}
 variable "image" {}
 variable "mesh" {}
 variable "mesh_node" {}
+variable "log_name" {}
