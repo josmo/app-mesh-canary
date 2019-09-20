@@ -1,18 +1,15 @@
 [
   {
-    "image": "${var.image}",
+    "image": "${image}",
     "name": "app",
     "essential" : true,
-    "environment": [
-      { "name": "WETTY_PORT", "value": "80"}
-    ],
     "dependsOn" : [{ "containerName" : "envoy", "condition": "HEALTHY"}],
     "logConfiguration": {
       "logDriver": "awslogs",
       "options": {
-        "awslogs-group": "${var.log_name}",
+        "awslogs-group": "${log_name}",
         "awslogs-region": "us-west-2",
-        "awslogs-stream-prefix": "${var.name}"
+        "awslogs-stream-prefix": "${name}"
       }
     },
     "portMappings": [
@@ -36,7 +33,7 @@
       }
     ],
     "environment": [
-      { "name": "APPMESH_VIRTUAL_NODE_NAME", "value": "mesh/${var.mesh}/virtualNode/${var.mesh_node}"},
+      { "name": "APPMESH_VIRTUAL_NODE_NAME", "value": "mesh/${mesh_name}/virtualNode/${mesh_node}"},
       { "name": "ENVOY_LOG_LEVEL", "value": "debug" },
       {
         "name": "ENABLE_ENVOY_XRAY_TRACING",
@@ -50,9 +47,9 @@
     "logConfiguration": {
       "logDriver": "awslogs",
       "options": {
-        "awslogs-group": "${var.log_name}",
+        "awslogs-group": "${log_name}",
         "awslogs-region": "us-west-2",
-        "awslogs-stream-prefix": "${var.name}-envoy"
+        "awslogs-stream-prefix": "${name}-envoy"
       }
     },
     "portMappings": [
@@ -98,9 +95,9 @@
     "logConfiguration": {
       "logDriver": "awslogs",
       "options": {
-        "awslogs-group": "${var.log_name}",
+        "awslogs-group": "${log_name}",
         "awslogs-region": "us-west-2",
-        "awslogs-stream-prefix": "${var.name}-xray"
+        "awslogs-stream-prefix": "${name}-xray"
       }
     }
   }

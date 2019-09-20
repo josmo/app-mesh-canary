@@ -1,4 +1,5 @@
 variable "task_exec_arn" {}
+variable "task_arn" {}
 variable "namespace_id" {}
 variable "cluster_id" {}
 variable "task_sg_id" {}
@@ -8,3 +9,4 @@ variable "image" {}
 variable "mesh" {}
 variable "mesh_node" {}
 variable "log_name" {}
+variable "launch_type" {}
