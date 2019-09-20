@@ -21,7 +21,7 @@
 * mesh_name ->
 
 
-### GET started
+### Get started
 1. clone
 2. set aws key and secret env vars
 3. terraform.tfvars with whatever variables changes
