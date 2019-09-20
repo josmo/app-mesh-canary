@@ -19,3 +19,10 @@
 * node_2_image -> api-2 image
 * namespace -> namespace for service discovery
 * mesh_name ->
+
+
+### GET started
+1. clone
+2. set aws key and secret env vars
+3. terraform.tfvars with whatever variables changes
+4. terraform apply
