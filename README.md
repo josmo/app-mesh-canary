@@ -2,11 +2,11 @@
 
 ## About
 ### layout
-[api](api) -> has the container definition, ecs service and service discovery
-[ec2-ecs](ec2-ecs) -> commented out in main but template for creating the public/private instances to join the cluster
+* [api](api) -> has the container definition, ecs service and service discovery
+* [ec2-ecs](ec2-ecs) -> commented out in main but template for creating the public/private instances to join the cluster
 
 
-* right now it creates 
+### What gets created
 
 1. api.{namespace}
 2. gateway.{namespace} ->with  api.{namespace} backend
