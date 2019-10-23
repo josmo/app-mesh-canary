@@ -1,5 +1,5 @@
 terraform {
-  required_version = "= 0.12.9"
+  required_version = "= 0.12.10"
 }
 
 provider "aws" {
@@ -15,7 +15,7 @@ resource "aws_appmesh_mesh" "mesh" {
   name = var.mesh_name
   spec {
     egress_filter {
-      type = "ALLOW_ALL"
+      type = "DROP_ALL"
     }
   }
 }
@@ -65,10 +65,6 @@ resource "aws_appmesh_virtual_service" "api" {
     }
   }
 }
-
-
-
-
 
 
 
@@ -182,27 +178,52 @@ resource "aws_security_group" "ecs_tasks" {
 }
 
 // TODO: add back to the gateway - disabled while testing since it just gets in a bad loop if the gateway task has issuess
-//resource "aws_alb" "main" {
-//  name            = "tf-ecs-api-load"
-//  subnets         = [data.terraform_remote_state.infra_base.outputs.subneta,data.terraform_remote_state.infra_base.outputs.subnetb,data.terraform_remote_state.infra_base.outputs.subnetc]
+//resource "aws_alb" "blue" {
+//  name            = "blue-load"
+//  subnets         = [module.vpc-core.public_subnets[0],module.vpc-core.public_subnets[1]]
 //  security_groups = [aws_security_group.lb.id]
 //}
 
-//resource "aws_alb_target_group" "app" {
-//  name        = "tf-ecs-chat"
+//resource "aws_alb_target_group" "blue" {
+//  name        = blue-targer-group
 //  port        = 80
 //  protocol    = "HTTP"
-//  vpc_id      = data.terraform_remote_state.infra_base.outputs.vpc_id
+//  vpc_id      = module.vpc-core.vpc_id
 //  target_type = "ip"
 //}
-
-//resource "aws_alb_listener" "front_end" {
-//  load_balancer_arn = aws_alb.main.id
+//
+//resource "aws_alb_listener" "blue_front_end" {
+//  load_balancer_arn = aws_alb.blue.id
 //  port              = "80"
 //  protocol          = "HTTP"
 //
 //  default_action {
-//    target_group_arn = aws_alb_target_group.app.id
+//    target_group_arn = aws_alb_target_group.blue.id
+//    type             = "forward"
+//  }
+//}
+//
+//resource "aws_alb" "green" {
+//  name            = "blue-load"
+//  subnets         = [module.vpc-core.public_subnets[0],module.vpc-core.public_subnets[1]]
+//  security_groups = [aws_security_group.lb.id]
+//}
+//
+//resource "aws_alb_target_group" "green" {
+//  name        = green-targer-group
+//  port        = 80
+//  protocol    = "HTTP"
+//  vpc_id      = module.vpc-core.vpc_id
+//  target_type = "ip"
+//}
+//
+//resource "aws_alb_listener" "green_front_end" {
+//  load_balancer_arn = aws_alb.green.id
+//  port              = "80"
+//  protocol          = "HTTP"
+//
+//  default_action {
+//    target_group_arn = aws_alb_target_group.green.id
 //    type             = "forward"
 //  }
 //}

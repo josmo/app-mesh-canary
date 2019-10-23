@@ -8,8 +8,8 @@ variable "node_2_image" {
   default = "tutum/hello-world"
 }
 variable "namespace" {
-  default = "local"
+  default = "luminary.local"
 }
 variable "mesh_name" {
-  default = "mesh"
+  default = "luminary-mesh"
 }

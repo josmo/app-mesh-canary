@@ -47,4 +47,9 @@ resource "aws_ecs_service" "api" {
     security_groups = [var.task_sg_id]
     subnets         = var.subnets
   }
+//  load_balancer {
+//    target_group_arn = var.target_group_arn
+//    container_name = "app"
+//    container_port = 80
+//  }
 }

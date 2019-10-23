@@ -10,3 +10,4 @@ variable "mesh" {}
 variable "mesh_node" {}
 variable "log_name" {}
 variable "launch_type" {}
+//variable "target_group_arn" {}
